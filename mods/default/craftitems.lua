@@ -42,6 +42,12 @@ local function formspec_string(lpp, page, lines, string)
 	return string
 end
 
+local book_writers = {}
+
+minetest.register_on_leaveplayer(function(player)
+	book_writers[player:get_player_name()] = nil
+end)
+
 local tab_number
 local lpp = 14 -- Lines per book's page
 local function book_on_use(itemstack, user)
@@ -90,6 +96,8 @@ local function book_on_use(itemstack, user)
 	end
 
 	minetest.show_formspec(player_name, "default:book", formspec_size .. formspec)
+	-- Store the wield index in case the user accidentally switches before the formspec is shown
+	book_writers[player_name] = {wield_index = user:get_wield_index()}
 	return itemstack
 end
 
@@ -97,10 +105,23 @@ local max_text_size = 10000
 local max_title_size = 80
 local short_title_size = 35
 minetest.register_on_player_receive_fields(function(player, formname, fields)
-	if formname ~= "default:book" then return end
+	if formname ~= "default:book" then
+		return
+	end
 	local player_name = player:get_player_name()
 	local inv = player:get_inventory()
-	local stack = player:get_wielded_item()
+	if not book_writers[player_name] then
+		return
+	end
+	local wield_index = book_writers[player_name].wield_index
+	local wield_list = player:get_wield_list()
+	local stack = inv:get_stack(wield_list, wield_index)
+	local written = stack:get_name() == "default:book_written"
+	if stack:get_name() ~= "default:book" and not written then
+		-- No book in the wield slot, abort & inform the player
+		minetest.chat_send_player(player_name, S("The book you were writing to mysteriously disappeared."))
+		return
+	end
 	local data = stack:get_meta():to_table().fields
 
 	local title = data.title or ""
@@ -127,9 +148,13 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 		return
 	end
 
+	if fields.close then
+		book_writers[player_name] = nil
+	end
+
 	if fields.save and fields.title and fields.text then
 		local new_stack
-		if stack:get_name() ~= "default:book_written" then
+		if not written then
 			local count = stack:get_count()
 			if count == 1 then
 				stack:set_name("default:book_written")
@@ -193,64 +218,9 @@ minetest.register_on_player_receive_fields(function(player, formname, fields)
 	end
 
 	-- Update stack
-	player:set_wielded_item(stack)
+	inv:set_stack(wield_list, wield_index, stack)
 end)
 
-minetest.register_craftitem("default:skeleton_key", {
-	description = S("Skeleton Key"),
-	inventory_image = "default_key_skeleton.png",
-	on_use = function(itemstack, user, pointed_thing)
-		if pointed_thing.type ~= "node" then
-			return itemstack
-		end
-
-		local pos = pointed_thing.under
-		local node = minetest.get_node(pos)
-
-		if not node then
-			return itemstack
-		end
-
-		local node_reg = minetest.registered_nodes[node.name]
-		local on_skeleton_key_use = node_reg and node_reg.on_skeleton_key_use
-		if not on_skeleton_key_use then
-			return itemstack
-		end
-
-		-- make a new key secret in case the node callback needs it
-		local random = math.random
-		local newsecret = string.format(
-			"%04x%04x%04x%04x",
-			random(2^16) - 1, random(2^16) - 1,
-			random(2^16) - 1, random(2^16) - 1)
-
-		local secret, _, _ = on_skeleton_key_use(pos, user, newsecret)
-
-		if secret then
-			local inv = minetest.get_inventory({type="player", name=user:get_player_name()})
-
-			-- update original itemstack
-			itemstack:take_item()
-
-			-- finish and return the new key
-			local new_stack = ItemStack("default:key")
-			local meta = new_stack:get_meta()
-			meta:set_string("secret", secret)
-			meta:set_string("description", S("Key to @1's @2", user:get_player_name(),
-				minetest.registered_nodes[node.name].description))
-
-			if itemstack:get_count() == 0 then
-				itemstack = new_stack
-			else
-				if inv:add_item("main", new_stack):get_count() > 0 then
-					minetest.add_item(user:get_pos(), new_stack)
-				end -- else: added to inventory successfully
-			end
-
-			return itemstack
-		end
-	end
-})
 
 --
 -- Craftitem registry
@@ -480,13 +450,6 @@ minetest.register_craft({
 })
 
 minetest.register_craft({
-	output = "default:skeleton_key",
-	recipe = {
-		{"default:gold_ingot"},
-	}
-})
-
-minetest.register_craft({
 	output = "default:steel_ingot 9",
 	recipe = {
 		{"default:steelblock"},
@@ -529,19 +492,6 @@ minetest.register_craft({
 	recipe = "default:gold_lump",
 })
 
-minetest.register_craft({
-	type = "cooking",
-	output = "default:gold_ingot",
-	recipe = "default:key",
-	cooktime = 5,
-})
-
-minetest.register_craft({
-	type = "cooking",
-	output = "default:gold_ingot",
-	recipe = "default:skeleton_key",
-	cooktime = 5,
-})
 
 minetest.register_craft({
 	type = "cooking",
