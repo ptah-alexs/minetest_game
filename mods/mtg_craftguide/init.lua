@@ -282,6 +282,7 @@ local function get_formspec(player)
 		"tooltip[clear;"..esc(S("Reset")).."]"..
 		"tooltip[prev;"..esc(S("Previous page")).."]"..
 		"tooltip[next;"..esc(S("Next page")).."]"..
+		"field_enter_after_edit[filter;true]"..
 		"field_close_on_enter[filter;false]")
 
 	if #data.items == 0 then
@@ -345,8 +346,11 @@ local function on_receive_fields(player, fields)
 		data.items = init_items
 		return true
 
-	elseif fields.key_enter_field == "filter" or fields.search then
-		local new = fields.filter:lower()
+	elseif (fields.key_enter_field == "filter" or fields.search)
+			and fields.filter then
+		local new = fields.filter:sub(1, 128) -- truncate to a sane length
+				:gsub("[%z\1-\8\11-\31\127]", "") -- strip naughty control characters (keeps \t and \n)
+				:lower() -- search is case insensitive
 		if data.filter == new then
 			return
 		end
